@@ -12,12 +12,10 @@
 
 constexpr size_t DATASET_SIZE = 5000000;
 
-void ProcessDataset(std::array<int, DATASET_SIZE>& set, int& sum, std::mutex& mtx)
+void ProcessDataset(std::array<int, DATASET_SIZE>& set, int& sum)
 {
     for (int num : set)
     {
-        //Locking and unlocking mutex has overhead which is not good for this situation of our large dataset
-        std::lock_guard g{ mtx };
         constexpr auto limit = (double)std::numeric_limits<int>::max();
         const auto x = (double)num / limit;
         sum += int(std::sin(std::cos(x)) * limit);
@@ -36,13 +34,17 @@ int main()
         std::ranges::generate(set, rne);
     }
 
-    std::mutex mtx;
-    int sum = 0;
+    struct Number
+    {
+        int value = 0;
+        char padding[60];
+    };
+    Number sum[4] = { 0 };
 
     timer.Mark();
-    for (auto& set : datasets)
+    for (size_t i = 0; i < 4; i++)
     {
-        workers.push_back(std::thread{ ProcessDataset, std::ref(set), std::ref(sum), std::ref(mtx) });
+        workers.push_back(std::thread{ ProcessDataset, std::ref(datasets[i]), std::ref(sum[i].value) });
     }
 
     for (auto& worker : workers)
@@ -52,6 +54,6 @@ int main()
     auto t = timer.Peek();
 
     std::cout << "Processing the datasets took " << t << " seconds" << std::endl;
-    std::cout << "Result is " << sum << std::endl;
+    std::cout << "Result is " << (sum[0].value + sum[1].value + sum[2].value + sum[3].value) << std::endl;
     return 0;
 }
