@@ -23,6 +23,84 @@ void ProcessDataset(std::span<int> set, int& sum)
     }
 }
 
+class MasterControl
+{
+public:
+    MasterControl(int workerCount) : lk{ mtx }, workerCount{ workerCount } {}
+    void SignalDone()
+    {
+        {
+            std::lock_guard lk{ mtx };
+            doneCount++;
+        }
+        if (doneCount == workerCount)
+        {
+            cv.notify_one();
+        }
+    }
+    void WaitForAllDone()
+    {
+        cv.wait(lk, [this] {return doneCount == workerCount;});
+        doneCount = 0;
+    }
+private:
+    std::condition_variable cv;
+    std::mutex mtx;
+    std::unique_lock<std::mutex> lk;
+    int workerCount;
+    //shared memory
+    int doneCount = 0;
+};
+
+class Worker
+{
+public:
+    Worker(MasterControl* pMaster) : pMaster{ pMaster }, thread{ &Worker::Run_, this } {}
+    void SetJob(std::span<int> data, int* pOut)
+    {
+        {
+            std::lock_guard lk{ mtx };
+            input = data;
+            pOutput = pOut;
+        }
+        cv.notify_one();
+    }
+    void Kill()
+    {
+        {
+            std::lock_guard lk{ mtx };
+            dying = true;
+        }
+        cv.notify_one();
+    }
+private:
+    void Run_()
+    {
+        std::unique_lock lk{ mtx };
+        while (true)
+        {
+            cv.wait(lk, [this] {return pOutput != nullptr || dying;});
+            if (dying)
+            {
+                break;
+            }
+            ProcessDataset(input, *pOutput);
+            pOutput = nullptr;
+            input = {};
+            pMaster->SignalDone();
+        }
+    }
+private:
+    MasterControl* pMaster;
+    std::jthread thread;
+    std::condition_variable cv;
+    std::mutex mtx;
+    //shared memory
+    bool dying = false;
+    std::span<int> input;
+    int* pOutput = nullptr;
+};
+
 std::vector<std::array<int, DATASET_SIZE>> GenerateDatasets()
 {
     std::minstd_rand rne;
@@ -82,22 +160,32 @@ int SmallChunk()
     Timer timer;
     timer.Mark();
 
-    int total = 0;
-    std::vector<std::jthread> workers;
+    constexpr size_t workerCount = 4;
+    MasterControl mctrl{ workerCount };
+    std::vector<std::unique_ptr<Worker>> workerPtrs;
+    for (size_t i = 0; i < workerCount; i++)
+    {
+        workerPtrs.push_back(std::make_unique<Worker>(&mctrl));
+    }
+
     constexpr auto subsetSize = DATASET_SIZE / 10'000;
     for (size_t i = 0; i < DATASET_SIZE; i += subsetSize)
     {
         for (size_t j = 0; j < 4; j++)
         {
-            workers.push_back(std::jthread{ ProcessDataset, std::span{&datasets[j][i], subsetSize}, std::ref(sum[j].value) });
+            workerPtrs[j]->SetJob(std::span{ &datasets[j][i], subsetSize }, &sum[j].value);
         }
-        workers.clear();
-        total = sum[0].value + sum[1].value + sum[2].value + sum[3].value;
+        mctrl.WaitForAllDone();
     }
     const auto t = timer.Peek();
 
     std::cout << "Processing the datasets took " << t << " seconds" << std::endl;
     std::cout << "Result is " << (sum[0].value + sum[1].value + sum[2].value + sum[3].value) << std::endl;
+
+    for (auto& worker : workerPtrs)
+    {
+        worker->Kill();
+    }
 
     return 0;
 }
