@@ -25,13 +25,14 @@ struct Task
     }
 };
 
-auto GenerateDatasetRandom()
+using Dataset = std::vector<std::array<Task, chunkSize>>;
+Dataset GenerateDatasetRandom()
 {
     std::minstd_rand rne;
     std::uniform_real_distribution vDist{ 0., 2. * std::numbers::pi };
     std::bernoulli_distribution hDist{ probabilityHeavy };
 
-    std::vector<std::array<Task, chunkSize>> chunks(chunkCount);
+    Dataset chunks(chunkCount);
 
     for (auto& chunk : chunks)
     {
@@ -41,12 +42,12 @@ auto GenerateDatasetRandom()
     return chunks;
 }
 
-auto GenerateDatasetEven()
+Dataset GenerateDatasetEven()
 {
     std::minstd_rand rne;
     std::uniform_real_distribution vDist{ 0., 2. * std::numbers::pi };
 
-    std::vector<std::array<Task, chunkSize>> chunks(chunkCount);
+    Dataset chunks(chunkCount);
 
     for (auto& chunk : chunks)
     {
@@ -63,7 +64,7 @@ auto GenerateDatasetEven()
     return chunks;
 }
 
-auto GenerateDatasetStacked()
+Dataset GenerateDatasetStacked()
 {
     auto chunks = GenerateDatasetEven();
 
